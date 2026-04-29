@@ -1,7 +1,6 @@
 ﻿using C06_APBD.DTOs;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
-using C06_APBD.DTOs;
 
 namespace C06_APBD.Controllers;
 
@@ -98,7 +97,7 @@ public class AppointmentsController : ControllerBase
 
 
     [HttpPost]
-    public async Task<IActionResult> AddAppointment([FromBody]CreateAppointmentRequestDto request)
+    public async Task<IActionResult> AddAppointment([FromBody] CreateAppointmentRequestDto request)
     {
         if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Length > 250)
             return BadRequest("Opis wizyty nie może być pusty i może mieć max 250 znaków.");
@@ -152,5 +151,83 @@ public class AppointmentsController : ControllerBase
         var newId = await insertCommand.ExecuteScalarAsync();
 
         return Created();
+    }
+
+
+    [HttpPut("{idAppointment:int}")]
+    public async Task<IActionResult> UpdateAppointment(int idAppointment, [FromBody] UpdateAppointmentRequestDto request)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync();
+
+        const string checkAppointmentSql = "SELECT Status, AppointmentDate FROM Appointments WHERE IdAppointment = @Id";
+        await using var checkAppCmd = new SqlCommand(checkAppointmentSql, connection);
+        checkAppCmd.Parameters.AddWithValue("@Id", idAppointment);
+
+        string currentStatus = string.Empty;
+        DateTime currentDate = DateTime.MinValue;
+
+        await using (var reader = await checkAppCmd.ExecuteReaderAsync())
+        {
+            if (!await reader.ReadAsync())
+                return NotFound(new { Message = "Wizyta nie istnieje." });
+
+            currentStatus = reader.GetString(0);
+            currentDate = reader.GetDateTime(1);
+        }
+
+        if (currentStatus == "Completed" && currentDate != request.AppointmentDate)
+        {
+            return BadRequest(new { Message = "Nie można zmienić daty wizyty, która została już zakończona." });
+        }
+
+        const string validationSql = """
+                                     SELECT 
+                                         (SELECT IsActive FROM Patients WHERE IdPatient = @IdP) AS PatientActive,
+                                         (SELECT IsActive FROM Doctors WHERE IdDoctor = @IdD) AS DoctorActive,
+                                         (SELECT COUNT(*) FROM Appointments WHERE IdDoctor = @IdD AND AppointmentDate = @NewDate AND IdAppointment != @IdApp AND Status != 'Cancelled') AS ConflictCount
+                                     """;
+
+        await using var valCmd = new SqlCommand(validationSql, connection);
+        valCmd.Parameters.AddWithValue("@IdP", request.IdPatient);
+        valCmd.Parameters.AddWithValue("@IdD", request.IdDoctor);
+        valCmd.Parameters.AddWithValue("@NewDate", request.AppointmentDate);
+        valCmd.Parameters.AddWithValue("@IdApp", idAppointment);
+
+        await using (var reader = await valCmd.ExecuteReaderAsync())
+        {
+            if (await reader.ReadAsync())
+            {
+                if (reader.IsDBNull(0) || !(bool)reader[0])
+                    return BadRequest("Pacjent nie istnieje lub jest nieaktywny.");
+                if (reader.IsDBNull(1) || !(bool)reader[1])
+                    return BadRequest("Lekarz nie istnieje lub jest nieaktywny.");
+                if ((int)reader[2] > 0) return Conflict("Lekarz ma już inną wizytę w tym terminie.");
+            }
+        }
+
+        const string updateSql = """
+                                 UPDATE Appointments 
+                                 SET IdPatient = @IdP, 
+                                     IdDoctor = @IdD, 
+                                     AppointmentDate = @Date, 
+                                     Status = @Status, 
+                                     Reason = @Reason, 
+                                     InternalNotes = @Notes
+                                 WHERE IdAppointment = @IdApp
+                                 """;
+
+        await using var updateCmd = new SqlCommand(updateSql, connection);
+        updateCmd.Parameters.AddWithValue("@IdP", request.IdPatient);
+        updateCmd.Parameters.AddWithValue("@IdD", request.IdDoctor);
+        updateCmd.Parameters.AddWithValue("@Date", request.AppointmentDate);
+        updateCmd.Parameters.AddWithValue("@Status", request.Status);
+        updateCmd.Parameters.AddWithValue("@Reason", request.Reason);
+        updateCmd.Parameters.AddWithValue("@Notes", (object?)request.InternalNotes ?? DBNull.Value);
+        updateCmd.Parameters.AddWithValue("@IdApp", idAppointment);
+
+        await updateCmd.ExecuteNonQueryAsync();
+
+        return Ok(new { Message = "Wizyta została zaktualizowana." });
     }
 }
