@@ -230,4 +230,37 @@ public class AppointmentsController : ControllerBase
 
         return Ok(new { Message = "Wizyta została zaktualizowana." });
     }
+
+    [HttpDelete("{idAppointment:int}")]
+    public async Task<IActionResult> DeleteAppointment(int idAppointment)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync();
+
+        const string checkSql = "SELECT Status FROM dbo.Appointments WHERE IdAppointment = @Id";
+        await using var checkCommand = new SqlCommand(checkSql, connection);
+        checkCommand.Parameters.AddWithValue("@Id", idAppointment);
+
+        var statusObj = await checkCommand.ExecuteScalarAsync();
+
+        if (statusObj == null)
+        {
+            return NotFound($"Wizyta o ID {idAppointment} nie istnieje.");
+        }
+
+        string status = statusObj.ToString()!;
+
+        if (status == "Completed")
+        {
+            return Conflict( "Nie można usunąć wizyty, która została już zakończona." );
+        }
+
+        const string deleteSql = "DELETE FROM dbo.Appointments WHERE IdAppointment = @Id";
+        await using var deleteCommand = new SqlCommand(deleteSql, connection);
+        deleteCommand.Parameters.AddWithValue("@Id", idAppointment);
+
+        await deleteCommand.ExecuteNonQueryAsync();
+        return NoContent();
+    }
+    
 }
