@@ -9,8 +9,12 @@ namespace C06_APBD.Controllers;
 [Route("api/[controller]")]
 public class AppointmentsController :ControllerBase
 {
-    private readonly string _connectionString ="Data Source=(localdb)\\MSSQLLocalDB;Initial Catalog=ClinicAdoNet;Integrated Security=True;Connect Timeout=30;Encrypt=False;Trust Server Certificate=False;Application Intent=ReadWrite;Multi Subnet Failover=False";
+    private string _connectionString = null;
 
+    public AppointmentsController(IConfiguration configuration)
+    {
+        _connectionString = configuration.GetConnectionString("Default");
+    }
 
     [HttpGet]
     public async Task<IActionResult> GetAll([FromQuery] string? status, [FromQuery] string? patientLastName)
@@ -53,6 +57,46 @@ public class AppointmentsController :ControllerBase
         }
 
         return Ok(appointments);
+    }  
+    
+    
+    [HttpGet]
+    [Route("{idAppointment:int}")]
+    public async Task<IActionResult> GetAppointmentById(int idAppointment)
+    {
+        var appointment = new AppointmentDetailsDto();
+    
+        await using var connection = new SqlConnection(_connectionString);
+        await using var command = new SqlCommand("""
+            SELECT  a.InternalNotes, a.CreatedAt, p.Email, p.PhoneNumber, d.LicenseNumber
+            
+            FROM Appointments a, Patients p, Doctors D 
+            WHERE a.IdDoctor = d.IdDoctor AND p.IdPatient = a.IdPatient
+            AND a.IdAppointment = @idAppointment;
+            """, connection);
+    
+    
+        command.Parameters.AddWithValue("@idAppointment", idAppointment);
+        await connection.OpenAsync();
+        await using var reader = await command.ExecuteReaderAsync();
+
+        if (await reader.ReadAsync())
+        {
+
+            appointment = new AppointmentDetailsDto
+            {
+                InternalNotes = reader.IsDBNull(0) ? null : reader.GetString(0),
+                CreatedAt = (DateTime)reader.GetValue(1),
+                PatientEmail = (string)reader.GetValue(2),
+                PatientPhone = (string)reader.GetValue(3),
+                DoctorLicenseNumber = (string)reader.GetValue(4)
+            };
+            return Ok(appointment);
+
+        }
+
+        return NotFound();
+
     } 
     
     
