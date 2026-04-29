@@ -11,6 +11,7 @@ public class CreateAppointmentRequestDto
     public int IdDoctor { get; set; }
 
     [Required]
+    [DataType(DataType.Date)]
     public DateTime AppointmentDate { get; set; }
 
     [Required]
